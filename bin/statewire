@@ -1,0 +1,250 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+// Look for autoloader
+$autoloadPaths = [
+    __DIR__ . '/../src/autoload.php',
+    __DIR__ . '/../../../autoload.php',
+    __DIR__ . '/../vendor/autoload.php',
+];
+
+$loaded = false;
+foreach ($autoloadPaths as $path) {
+    if (file_exists($path)) {
+        require_once $path;
+        $loaded = true;
+        break;
+    }
+}
+
+if (!$loaded) {
+    fwrite(STDERR, "Error: Unable to locate StateWire autoloader.\n");
+    exit(1);
+}
+
+use StateWire\StateMachine;
+use StateWire\Analysis\GraphAuditor;
+use StateWire\Exporters\MermaidExporter;
+use StateWire\Exporters\PlantUmlExporter;
+use StateWire\Exporters\DotExporter;
+
+$version = '1.0.0';
+
+function printHeader(): void
+{
+    echo "⚡ StateWire CLI v1.0.0 - Finite State Machine Engine for PHP 8.2+\n";
+    echo str_repeat("─", 65) . "\n";
+}
+
+function printUsage(): void
+{
+    printHeader();
+    echo "Usage:\n";
+    echo "  statewire <command> [options] [arguments]\n\n";
+    echo "Commands:\n";
+    echo "  inspect <file>        Inspect state machine topology, states, and events\n";
+    echo "  validate <file>       Audit graph for unreachable states and dead-ends\n";
+    echo "  mermaid <file>        Export machine definition to Mermaid stateDiagram-v2\n";
+    echo "  plantuml <file>       Export machine definition to PlantUML diagram\n";
+    echo "  dot <file>            Export machine definition to Graphviz DOT format\n";
+    echo "  simulate <file>       Step through event transitions interactively or sequentially\n";
+    echo "  version               Display CLI and engine version\n";
+    echo "  help                  Display this help reference\n\n";
+    echo "Options:\n";
+    echo "  --events=e1,e2,...    Comma-separated list of events to simulate in batch\n";
+    echo "  --json                Output result in machine-readable JSON format\n\n";
+    echo "Examples:\n";
+    echo "  statewire inspect workflow.json\n";
+    echo "  statewire validate src/OrderMachine.php\n";
+    echo "  statewire mermaid workflow.json\n";
+    echo "  statewire simulate workflow.json --events=submit,pay,ship\n";
+}
+
+/**
+ * Load a StateMachine instance from a PHP file (that returns a StateMachine or MachineDefinition) or JSON.
+ */
+function loadMachine(string $path): StateMachine
+{
+    if (!file_exists($path)) {
+        fwrite(STDERR, "Error: File not found: {$path}\n");
+        exit(1);
+    }
+
+    $ext = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+
+    if ($ext === 'json') {
+        $content = file_get_contents($path);
+        if ($content === false) {
+            fwrite(STDERR, "Error: Unable to read {$path}\n");
+            exit(1);
+        }
+        return StateMachine::fromJson($content);
+    }
+
+    if ($ext === 'php') {
+        $result = require $path;
+        if ($result instanceof StateMachine) {
+            return $result;
+        }
+        if ($result instanceof \StateWire\MachineDefinition) {
+            return new StateMachine($result);
+        }
+        if ($result instanceof \StateWire\MachineBuilder) {
+            return $result->build();
+        }
+        fwrite(STDERR, "Error: PHP file must return a StateMachine, MachineDefinition, or MachineBuilder instance.\n");
+        exit(1);
+    }
+
+    fwrite(STDERR, "Error: Unsupported file format. Expected .json or .php file.\n");
+    exit(1);
+}
+
+// Parse argv
+$args = array_slice($argv, 1);
+if (empty($args) || in_array($args[0], ['-h', '--help', 'help'], true)) {
+    printUsage();
+    exit(0);
+}
+
+if (in_array($args[0], ['-v', '--version', 'version'], true)) {
+    echo "StateWire version {$version}\n";
+    exit(0);
+}
+
+$command = $args[0];
+$file = null;
+$options = [];
+
+for ($i = 1; $i < count($args); $i++) {
+    $arg = $args[$i];
+    if (str_starts_with($arg, '--')) {
+        $parts = explode('=', substr($arg, 2), 2);
+        $options[$parts[0]] = $parts[1] ?? true;
+    } elseif ($file === null) {
+        $file = $arg;
+    }
+}
+
+if ($file === null && !in_array($command, ['help', 'version'], true)) {
+    fwrite(STDERR, "Error: Missing target file argument.\n");
+    printUsage();
+    exit(1);
+}
+
+switch ($command) {
+    case 'inspect':
+        $machine = loadMachine($file);
+        $def = $machine->getDefinition();
+        $isJson = isset($options['json']);
+
+        if ($isJson) {
+            echo json_encode($def->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n";
+            exit(0);
+        }
+
+        printHeader();
+        echo "Machine Name    : " . $def->name . "\n";
+        echo "Initial State   : " . $def->initialState . "\n";
+        echo "Current State   : " . $machine->getState() . "\n";
+        echo "Total States    : " . count($def->getStates()) . " (" . implode(', ', $def->getStates()) . ")\n";
+        echo "Final States    : " . (empty($def->getFinalStates()) ? '(none)' : implode(', ', $def->getFinalStates())) . "\n";
+        echo "Transitions (" . count($def->getTransitions()) . "):\n";
+
+        foreach ($def->getTransitions() as $t) {
+            $from = implode('|', $t->fromStates);
+            $guardLabel = !empty($t->guards) ? ' [Guarded]' : '';
+            $desc = $t->label ? " ({$t->label})" : '';
+            echo sprintf("  %-20s ──(%s%s)──> %s%s\n", $from, $t->event, $guardLabel, $t->to, $desc);
+        }
+        break;
+
+    case 'validate':
+        $machine = loadMachine($file);
+        $audit = $machine->validate();
+        $isJson = isset($options['json']);
+
+        if ($isJson) {
+            echo json_encode($audit->jsonSerialize(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n";
+            exit($audit->isValid() ? 0 : 1);
+        }
+
+        printHeader();
+        echo "Auditing State Machine Topology...\n";
+
+        if ($audit->isValid()) {
+            echo "✔ Topology Valid! No unreachable states, dead ends, or cycle anomalies found.\n";
+            exit(0);
+        }
+
+        echo "✖ Topology Issues Detected:\n";
+        if (!empty($audit->unreachableStates)) {
+            echo "  • Unreachable States: " . implode(', ', $audit->unreachableStates) . "\n";
+        }
+        if (!empty($audit->deadEndStates)) {
+            echo "  • Dead-End States (non-final with 0 exits): " . implode(', ', $audit->deadEndStates) . "\n";
+        }
+        if (!empty($audit->unreachableFinalStates)) {
+            echo "  • Unreachable Final States: " . implode(', ', $audit->unreachableFinalStates) . "\n";
+        }
+        if (!empty($audit->warnings)) {
+            foreach ($audit->warnings as $w) {
+                echo "  • Warning: {$w}\n";
+            }
+        }
+        exit(1);
+
+    case 'mermaid':
+        $machine = loadMachine($file);
+        echo $machine->toMermaid();
+        break;
+
+    case 'plantuml':
+        $machine = loadMachine($file);
+        echo $machine->toPlantUml();
+        break;
+
+    case 'dot':
+        $machine = loadMachine($file);
+        echo $machine->toDot();
+        break;
+
+    case 'simulate':
+        $machine = loadMachine($file);
+        printHeader();
+        echo "Simulation Initial State: [" . $machine->getState() . "]\n";
+
+        $eventsList = [];
+        if (isset($options['events']) && is_string($options['events'])) {
+            $eventsList = array_filter(array_map('trim', explode(',', $options['events'])));
+        }
+
+        if (empty($eventsList)) {
+            echo "No events specified. Available events in current state: " . implode(', ', $machine->getAvailableEvents()) . "\n";
+            echo "Use --events=event1,event2 to simulate a path.\n";
+            exit(0);
+        }
+
+        foreach ($eventsList as $idx => $event) {
+            $from = $machine->getState();
+            $result = $machine->transition($event);
+
+            $stepNum = $idx + 1;
+            if ($result->successful) {
+                echo sprintf("  [%d] Event '%s': %s ➔ %s (duration: %.2f ms) ✔\n", $stepNum, $event, $from, $result->toState, $result->record->durationMs);
+            } else {
+                echo sprintf("  [%d] Event '%s': FAILED from '%s'! Reason: %s ✖\n", $stepNum, $event, $from, $result->failureReason);
+                exit(1);
+            }
+        }
+
+        echo "\nSimulation Completed! Final State: [" . $machine->getState() . "] " . ($machine->isFinal() ? '(Final State Achieved)' : '') . "\n";
+        break;
+
+    default:
+        fwrite(STDERR, "Unknown command: {$command}\n");
+        printUsage();
+        exit(1);
+}

@@ -1,0 +1,38 @@
+{
+  "name": "OrderWorkflow",
+  "initial_state": "draft",
+  "states": ["draft", "pending_payment", "processing", "shipped", "delivered", "cancelled"],
+  "final_states": ["delivered", "cancelled"],
+  "transitions": [
+    {
+      "from": "draft",
+      "to": "pending_payment",
+      "event": "submit",
+      "label": "Customer submits order"
+    },
+    {
+      "from": "pending_payment",
+      "to": "processing",
+      "event": "payment_received",
+      "label": "Payment gateway captures funds"
+    },
+    {
+      "from": "processing",
+      "to": "shipped",
+      "event": "ship",
+      "label": "Warehouse dispatches parcel"
+    },
+    {
+      "from": "shipped",
+      "to": "delivered",
+      "event": "deliver",
+      "label": "Courier marks delivered"
+    },
+    {
+      "from": ["draft", "pending_payment"],
+      "to": "cancelled",
+      "event": "cancel",
+      "label": "Order aborted"
+    }
+  ]
+}

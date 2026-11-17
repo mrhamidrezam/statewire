@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+
+jobs:
+  test:
+    name: PHP ${{ matrix.php }} Test Suite
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.2', '8.3', '8.4']
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          coverage: none
+
+      - name: Run Test Suite
+        run: php tests/run.php
+
+      - name: Run Examples Verification
+        run: |
+          php examples/01_order_fulfillment.php
+          php examples/02_guarded_banking.php
+          php examples/03_graph_validation.php
+          php examples/04_mermaid_export.php
+
+      - name: Test StateWire CLI
+        run: |
+          php bin/statewire version
+          php bin/statewire inspect examples/workflow.json
+          php bin/statewire validate examples/workflow.json
+          php bin/statewire simulate examples/workflow.json --events=submit,payment_received,ship,deliver

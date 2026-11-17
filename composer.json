@@ -1,0 +1,42 @@
+{
+  "name": "mrhamidrezam/statewire",
+  "description": "⚡ Zero-dependency Finite State Machine (FSM), guarded transition lifecycle, state graph validation & visual export engine for PHP 8.2+",
+  "type": "library",
+  "license": "MIT",
+  "keywords": [
+    "state-machine",
+    "fsm",
+    "workflow",
+    "finite-state-machine",
+    "transitions",
+    "mermaid",
+    "graph-validator",
+    "php82"
+  ],
+  "authors": [
+    {
+      "name": "Hamidreza Mahdavipanah",
+      "homepage": "https://github.com/mrhamidrezam"
+    }
+  ],
+  "require": {
+    "php": ">=8.2.0"
+  },
+  "autoload": {
+    "psr-4": {
+      "StateWire\\": "src/"
+    },
+    "files": [
+      "src/autoload.php"
+    ]
+  },
+  "bin": [
+    "bin/statewire"
+  ],
+  "config": {
+    "sort-packages": true,
+    "optimize-autoloader": true
+  },
+  "minimum-stability": "stable",
+  "prefer-stable": true
+}
